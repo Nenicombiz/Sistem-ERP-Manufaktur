@@ -13,28 +13,35 @@
 -- 1. EXTENSIONS & CUSTOM TYPES ENUM
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TYPE po_category_enum AS ENUM (
-  'Component', 
-  'Project', 
-  'Standard Part', 
-  'MassPro Machining', 
-  'MassPro Stamping', 
-  'MassPro Injection'
-);
-
-CREATE TYPE manufacturing_dept_enum AS ENUM (
-  'General Admin',
-  'Design Mekanik',
-  'Design Electric',
-  'Proccessing',
-  'Assembly',
-  'PPIC Delivery',
-  'MassPro Machine',
-  'MassPro Stamping',
-  'MassPro Injection',
-  'Pembelian',
-  'Quality Control'
-);
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'po_category_enum') THEN
+        CREATE TYPE po_category_enum AS ENUM (
+          'Component', 
+          'Project', 
+          'Standard Part', 
+          'MassPro Machining', 
+          'MassPro Stamping', 
+          'MassPro Injection'
+        );
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'manufacturing_dept_enum') THEN
+        CREATE TYPE manufacturing_dept_enum AS ENUM (
+          'General Admin',
+          'Design Mekanik',
+          'Design Electric',
+          'Proccessing',
+          'Assembly',
+          'PPIC Delivery',
+          'MassPro Machine',
+          'MassPro Stamping',
+          'MassPro Injection',
+          'Pembelian',
+          'Quality Control'
+        );
+    END IF;
+END $$;
 
 -- 2. MASTER DATA TABLES
 -- Tabel Customer (Sesuai Master Register)
@@ -49,6 +56,8 @@ CREATE TABLE IF NOT EXISTS customers (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS email VARCHAR(100);
+
 -- Tabel Supplier (Sesuai Master Register)
 CREATE TABLE IF NOT EXISTS suppliers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -61,6 +70,8 @@ CREATE TABLE IF NOT EXISTS suppliers (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email VARCHAR(100);
+
 -- Tabel Product Template (Sesuai Master Katalog Produk)
 CREATE TABLE IF NOT EXISTS products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -72,6 +83,8 @@ CREATE TABLE IF NOT EXISTS products (
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
 
 
 -- 3. TRANSACTIONAL & WORKFLOW TABLES

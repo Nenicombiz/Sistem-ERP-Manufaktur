@@ -397,43 +397,81 @@ function SupabaseQueryConsole() {
 -- 6. Registrasi Master Partner -> Tabel 'suppliers', 'customers', 'products'
 -- ==========================================
 
--- Custom ENUMS
-CREATE TYPE po_category_enum AS ENUM (
-  'Component', 'Project', 'Standard Part', 
-  'MassPro Machining', 'MassPro Stamping', 'MassPro Injection'
-);
+-- 1. EXTENSIONS & CUSTOM TYPES ENUM
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TYPE manufacturing_dept_enum AS ENUM (
-  'General Admin', 'Design Mekanik', 'Design Electric', 'Proccessing',
-  'Assembly', 'PPIC Delivery', 'MassPro Machine', 'MassPro Stamping',
-  'MassPro Injection', 'Pembelian', 'Quality Control'
-);
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'po_category_enum') THEN
+        CREATE TYPE po_category_enum AS ENUM (
+          'Component', 
+          'Project', 
+          'Standard Part', 
+          'MassPro Machining', 
+          'MassPro Stamping', 
+          'MassPro Injection'
+        );
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'manufacturing_dept_enum') THEN
+        CREATE TYPE manufacturing_dept_enum AS ENUM (
+          'General Admin',
+          'Design Mekanik',
+          'Design Electric',
+          'Proccessing',
+          'Assembly',
+          'PPIC Delivery',
+          'MassPro Machine',
+          'MassPro Stamping',
+          'MassPro Injection',
+          'Pembelian',
+          'Quality Control'
+        );
+    END IF;
+END $$;
 
--- Master register tables
-CREATE TABLE customers (
+-- 2. MASTER DATA TABLES
+CREATE TABLE IF NOT EXISTS customers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
-    phone VARCHAR(50), address TEXT, industry VARCHAR(100)
+    phone VARCHAR(50),
+    email VARCHAR(100),
+    address TEXT,
+    industry VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE suppliers (
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS email VARCHAR(100);
+
+CREATE TABLE IF NOT EXISTS suppliers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
-    phone VARCHAR(50), address TEXT, category VARCHAR(100)
+    phone VARCHAR(50),
+    email VARCHAR(100),
+    address TEXT,
+    category VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE products (
+ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS email VARCHAR(100);
+
+CREATE TABLE IF NOT EXISTS products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(50) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
     category po_category_enum NOT NULL,
-    unit VARCHAR(20) DEFAULT 'pcs', default_price DECIMAL(15, 2) DEFAULT 0.0
+    unit VARCHAR(20) DEFAULT 'pcs',
+    default_price DECIMAL(15, 2) DEFAULT 0.00,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Active Primary PO Tracker (Penerbitan & Sirkulasi)
-CREATE TABLE primary_pos (
+ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
+
+-- 3. TRANSACTIONAL & WORKFLOW TABLES
+CREATE TABLE IF NOT EXISTS primary_pos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     po_number VARCHAR(100) UNIQUE NOT NULL,
     category po_category_enum NOT NULL DEFAULT 'Component',
@@ -445,14 +483,14 @@ CREATE TABLE primary_pos (
     unit_price DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     total_price DECIMAL(15, 2) GENERATED ALWAYS AS (qty * unit_price) STORED,
     order_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    target_departments manufacturing_dept_enum[] NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+    target_departments manufacturing_dept_enum[] NOT NULL DEFAULT ARRAY['PPIC Delivery'::manufacturing_dept_enum],
+    status VARCHAR(50) NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'In Progress', 'Completed', 'Cancelled')),
     dept_statuses JSONB NOT NULL DEFAULT '{}'::jsonb,
-    notes TEXT
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Internal Department POs (PO Sekunder Jasa & Material)
-CREATE TABLE department_pos (
+CREATE TABLE IF NOT EXISTS department_pos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     parent_po_id UUID REFERENCES primary_pos(id) ON DELETE CASCADE,
     parent_po_number VARCHAR(100) NOT NULL,
@@ -460,55 +498,87 @@ CREATE TABLE department_pos (
     secondary_po_number VARCHAR(100) UNIQUE NOT NULL,
     vendor_name VARCHAR(255) NOT NULL,
     item_name VARCHAR(255) NOT NULL,
-    qty DECIMAL(12,2) NOT NULL CHECK (qty > 0),
+    qty DECIMAL(12, 2) NOT NULL CHECK (qty > 0),
     unit VARCHAR(20) NOT NULL,
     unit_price DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
     total_price DECIMAL(15, 2) GENERATED ALWAYS AS (qty * unit_price) STORED,
-    status VARCHAR(50) NOT NULL DEFAULT 'Issued'
+    order_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    status VARCHAR(50) NOT NULL DEFAULT 'Issued' CHECK (status IN ('Issued', 'Received', 'Invoiced', 'Paid')),
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Warehouse log & Stock items
-CREATE TABLE stock_items (
+CREATE TABLE IF NOT EXISTS stock_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(100) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
-    category VARCHAR(50) CHECK (category IN ('Raw Material', 'Standard Part', 'Sub-Assembly', 'Finished Goods')),
-    quantity DECIMAL(12,2) NOT NULL DEFAULT 0,
-    unit VARCHAR(20) NOT NULL, unit_cost DECIMAL(15,2) DEFAULT 0
+    category VARCHAR(50) NOT NULL CHECK (category IN ('Raw Material', 'Standard Part', 'Sub-Assembly', 'Finished Goods')),
+    quantity DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    unit VARCHAR(20) NOT NULL,
+    unit_cost DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    min_stock DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    location VARCHAR(100),
+    vendor VARCHAR(255),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Integrated Ledger journals (PPN 11% Auto calculate trigger)
-CREATE TABLE purchasing_logs (
+-- 4. BUKU ARUS TRANSAKSI & PERPAJAKAN (PPN 11%)
+CREATE TABLE IF NOT EXISTS purchasing_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     purchase_no VARCHAR(100) UNIQUE NOT NULL,
-    secondary_po_number VARCHAR(100), supplier VARCHAR(255) NOT NULL,
-    item_name VARCHAR(255) NOT NULL, qty DECIMAL(12, 2) NOT NULL, unit VARCHAR(20) NOT NULL,
-    unit_price DECIMAL(15, 2) NOT NULL, subtotal DECIMAL(15, 2) NOT NULL,
-    tax DECIMAL(15, 2) NOT NULL, grand_total DECIMAL(15, 2) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'Paid'
+    secondary_po_number VARCHAR(100),
+    supplier VARCHAR(255) NOT NULL,
+    item_name VARCHAR(255) NOT NULL,
+    qty DECIMAL(12, 2) NOT NULL,
+    unit VARCHAR(20) NOT NULL,
+    unit_price DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    subtotal DECIMAL(15, 2) NOT NULL,
+    tax DECIMAL(15, 2) NOT NULL,
+    grand_total DECIMAL(15, 2) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'Paid' CHECK (status IN ('Paid', 'Unpaid')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE sales_logs (
+CREATE TABLE IF NOT EXISTS sales_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     date DATE NOT NULL DEFAULT CURRENT_DATE,
     sales_no VARCHAR(100) UNIQUE NOT NULL,
-    primary_po_number VARCHAR(100) NOT NULL, client_name VARCHAR(255) NOT NULL,
-    item_name VARCHAR(255) NOT NULL, qty DECIMAL(12, 2) NOT NULL, unit VARCHAR(20) NOT NULL,
-    unit_price DECIMAL(15, 2) NOT NULL, subtotal DECIMAL(15, 2) NOT NULL,
-    tax DECIMAL(15, 2) NOT NULL, grand_total DECIMAL(15, 2) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'Paid'
+    primary_po_number VARCHAR(100) NOT NULL,
+    client_name VARCHAR(255) NOT NULL,
+    item_name VARCHAR(255) NOT NULL,
+    qty DECIMAL(12, 2) NOT NULL,
+    unit VARCHAR(20) NOT NULL,
+    unit_price DECIMAL(15, 2) NOT NULL,
+    subtotal DECIMAL(15, 2) NOT NULL,
+    tax DECIMAL(15, 2) NOT NULL,
+    grand_total DECIMAL(15, 2) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'Paid' CHECK (status IN ('Draft', 'Invoiced', 'Paid')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE invoices (
+CREATE TABLE IF NOT EXISTS invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_no VARCHAR(100) UNIQUE NOT NULL,
     date_created DATE NOT NULL DEFAULT CURRENT_DATE,
-    due_date DATE NOT NULL, client_name VARCHAR(255) NOT NULL,
+    due_date DATE NOT NULL,
+    client_name VARCHAR(255) NOT NULL,
+    client_address TEXT,
+    primary_po_id UUID REFERENCES primary_pos(id) ON DELETE SET NULL,
     primary_po_number VARCHAR(100) NOT NULL,
-    subtotal DECIMAL(15, 2) NOT NULL, tax DECIMAL(15, 2) NOT NULL,
-    grand_total DECIMAL(15, 2) NOT NULL, status VARCHAR(50) NOT NULL DEFAULT 'Unpaid'
-);`;
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    subtotal DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    tax DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    grand_total DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+    status VARCHAR(50) NOT NULL DEFAULT 'Unpaid' CHECK (status IN ('Unpaid', 'Paid', 'Overdue')),
+    payment_date DATE,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. TRIGGER AUTOMATIC TAX CALCULATIONS (PPN 11%)
+-- CREATE OR REPLACE FUNCTION calculate_taxes_and_totals()... (Bisa dicatatkan di database)
+`;
 
   const handleCopyToClipboard = () => {
     navigator.clipboard.writeText(supabaseSQLCode);
