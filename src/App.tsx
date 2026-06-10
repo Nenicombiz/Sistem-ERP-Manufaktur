@@ -28,6 +28,7 @@ import {
   INITIAL_PRODUCTS
 } from './data/initialData';
 import { formatIDR, DEPARTMENTS } from './utils';
+import { DbService } from './supabaseClient';
 
 // Import Views
 import DashboardView from './components/DashboardView';
@@ -108,58 +109,23 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Core CRM/ERP States with Persistence
-  const [primaryPOs, setPrimaryPOs] = useState<PrimaryPO[]>(() => {
-    const saved = localStorage.getItem('erp_primary_pos');
-    return saved ? JSON.parse(saved) : INITIAL_PRIMARY_POS;
-  });
-
-  const [deptPOs, setDeptPOs] = useState<DepartmentPO[]>(() => {
-    const saved = localStorage.getItem('erp_dept_pos');
-    return saved ? JSON.parse(saved) : INITIAL_DEPT_POS;
-  });
-
-  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    const saved = localStorage.getItem('erp_stock_items');
-    return saved ? JSON.parse(saved) : INITIAL_STOCK_ITEMS;
-  });
-
-  const [purchasingLogs, setPurchasingLogs] = useState<PurchasingLog[]>(() => {
-    const saved = localStorage.getItem('erp_purchasing_logs');
-    return saved ? JSON.parse(saved) : INITIAL_PURCHASING_LOGS;
-  });
-
-  const [salesLogs, setSalesLogs] = useState<SalesLog[]>(() => {
-    const saved = localStorage.getItem('erp_sales_logs');
-    return saved ? JSON.parse(saved) : INITIAL_SALES_LOGS;
-  });
-
-  const [invoices, setInvoices] = useState<Invoice[]>(() => {
-    const saved = localStorage.getItem('erp_invoices');
-    return saved ? JSON.parse(saved) : INITIAL_INVOICES;
-  });
-
-  // Corporate Liquid Cash Account
-  const [cashBalance, setCashBalance] = useState<number>(() => {
-    const saved = localStorage.getItem('erp_cash_balance');
-    return saved ? parseFloat(saved) : 1585000000; // Default Rp 1.585 M
-  });
+  // Core CRM/ERP States with live Supabase synchronization
+  const [primaryPOs, setPrimaryPOs] = useState<PrimaryPO[]>([]);
+  const [deptPOs, setDeptPOs] = useState<DepartmentPO[]>([]);
+  const [stockItems, setStockItems] = useState<StockItem[]>([]);
+  const [purchasingLogs, setPurchasingLogs] = useState<PurchasingLog[]>([]);
+  const [salesLogs, setSalesLogs] = useState<SalesLog[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [cashBalance, setCashBalance] = useState<number>(1585000000);
 
   // Master Data States
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
-    const saved = localStorage.getItem('erp_suppliers');
-    return saved ? JSON.parse(saved) : INITIAL_SUPPLIERS;
-  });
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
 
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('erp_customers');
-    return saved ? JSON.parse(saved) : INITIAL_CUSTOMERS;
-  });
-
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('erp_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-  });
+  // Connection & Sync Stats
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [syncStatus, setSyncStatus] = useState<string>('Menyambungkan...');
 
   // User simulated role and department states details
   const [userRole, setUserRole] = useState<string>(() => {
@@ -170,29 +136,120 @@ export default function App() {
     return (localStorage.getItem('erp_sim_dept') as ManufacturingDepartment) || 'Design Mekanik';
   });
 
-  // Persist State Updates
+  // 1. Unified load hook for full Supabase Synchronization
   useEffect(() => {
-    localStorage.setItem('erp_primary_pos', JSON.stringify(primaryPOs));
+    async function loadAllData() {
+      setIsLoading(true);
+      setSyncStatus('Menghubungkan ke live Supabase...');
+      try {
+        console.log('Loading collections from Supabase...');
+        const [
+          dbPrimary,
+          dbDept,
+          dbStock,
+          dbPurchasing,
+          dbSales,
+          dbInvoices,
+          dbSuppliers,
+          dbCustomers,
+          dbProducts
+        ] = await Promise.all([
+          DbService.getPrimaryPOs(),
+          DbService.getDeptPOs(),
+          DbService.getStockItems(),
+          DbService.getPurchasingLogs(),
+          DbService.getSalesLogs(),
+          DbService.getInvoices(),
+          DbService.getSuppliers(),
+          DbService.getCustomers(),
+          DbService.getProducts()
+        ]);
+
+        console.log('Successfully loaded all collections from Supabase!');
+        
+        // Populate local state
+        setPrimaryPOs(dbPrimary.length > 0 ? dbPrimary : INITIAL_PRIMARY_POS);
+        setDeptPOs(dbDept.length > 0 ? dbDept : INITIAL_DEPT_POS);
+        setStockItems(dbStock.length > 0 ? dbStock : INITIAL_STOCK_ITEMS);
+        setPurchasingLogs(dbPurchasing.length > 0 ? dbPurchasing : INITIAL_PURCHASING_LOGS);
+        setSalesLogs(dbSales.length > 0 ? dbSales : INITIAL_SALES_LOGS);
+        setInvoices(dbInvoices.length > 0 ? dbInvoices : INITIAL_INVOICES);
+        setSuppliers(dbSuppliers.length > 0 ? dbSuppliers : INITIAL_SUPPLIERS);
+        setCustomers(dbCustomers.length > 0 ? dbCustomers : INITIAL_CUSTOMERS);
+        setProducts(dbProducts.length > 0 ? dbProducts : INITIAL_PRODUCTS);
+
+        // Calculate cash balance: Base Rp 1.585 M + sales inflow - purchasing outflow
+        const totalSalesInflow = dbSales.reduce((acc, log) => acc + log.grandTotal, 0);
+        const totalPurchasingOutflow = dbPurchasing.reduce((acc, log) => acc + log.grandTotal, 0);
+        const calculatedBalance = 1585000000 + totalSalesInflow - totalPurchasingOutflow;
+        setCashBalance(calculatedBalance);
+
+        setSyncStatus('Terhubung');
+      } catch (err: any) {
+        console.warn('Postgres/Supabase read error, using local fallback:', err);
+        setSyncStatus('Offline / Lokal');
+        
+        // Fallback reading
+        const savedPrimaryPOs = localStorage.getItem('erp_primary_pos');
+        setPrimaryPOs(savedPrimaryPOs ? JSON.parse(savedPrimaryPOs) : INITIAL_PRIMARY_POS);
+
+        const savedDeptPOs = localStorage.getItem('erp_dept_pos');
+        setDeptPOs(savedDeptPOs ? JSON.parse(savedDeptPOs) : INITIAL_DEPT_POS);
+
+        const savedStockItems = localStorage.getItem('erp_stock_items');
+        setStockItems(savedStockItems ? JSON.parse(savedStockItems) : INITIAL_STOCK_ITEMS);
+
+        const savedPurchasing = localStorage.getItem('erp_purchasing_logs');
+        setPurchasingLogs(savedPurchasing ? JSON.parse(savedPurchasing) : INITIAL_PURCHASING_LOGS);
+
+        const savedSales = localStorage.getItem('erp_sales_logs');
+        setSalesLogs(savedSales ? JSON.parse(savedSales) : INITIAL_SALES_LOGS);
+
+        const savedInvoices = localStorage.getItem('erp_invoices');
+        setInvoices(savedInvoices ? JSON.parse(savedInvoices) : INITIAL_INVOICES);
+
+        const savedCash = localStorage.getItem('erp_cash_balance');
+        setCashBalance(savedCash ? parseFloat(savedCash) : 1585000000);
+
+        const savedSuppliers = localStorage.getItem('erp_suppliers');
+        setSuppliers(savedSuppliers ? JSON.parse(savedSuppliers) : INITIAL_SUPPLIERS);
+
+        const savedCustomers = localStorage.getItem('erp_customers');
+        setCustomers(savedCustomers ? JSON.parse(savedCustomers) : INITIAL_CUSTOMERS);
+
+        const savedProducts = localStorage.getItem('erp_products');
+        setProducts(savedProducts ? JSON.parse(savedProducts) : INITIAL_PRODUCTS);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadAllData();
+  }, []);
+
+  // Sync state mutations to local storage as supplementary safety backup
+  useEffect(() => {
+    if (primaryPOs.length > 0) localStorage.setItem('erp_primary_pos', JSON.stringify(primaryPOs));
   }, [primaryPOs]);
 
   useEffect(() => {
-    localStorage.setItem('erp_dept_pos', JSON.stringify(deptPOs));
+    if (deptPOs.length > 0) localStorage.setItem('erp_dept_pos', JSON.stringify(deptPOs));
   }, [deptPOs]);
 
   useEffect(() => {
-    localStorage.setItem('erp_stock_items', JSON.stringify(stockItems));
+    if (stockItems.length > 0) localStorage.setItem('erp_stock_items', JSON.stringify(stockItems));
   }, [stockItems]);
 
   useEffect(() => {
-    localStorage.setItem('erp_purchasing_logs', JSON.stringify(purchasingLogs));
+    if (purchasingLogs.length > 0) localStorage.setItem('erp_purchasing_logs', JSON.stringify(purchasingLogs));
   }, [purchasingLogs]);
 
   useEffect(() => {
-    localStorage.setItem('erp_sales_logs', JSON.stringify(salesLogs));
+    if (salesLogs.length > 0) localStorage.setItem('erp_sales_logs', JSON.stringify(salesLogs));
   }, [salesLogs]);
 
   useEffect(() => {
-    localStorage.setItem('erp_invoices', JSON.stringify(invoices));
+    if (invoices.length > 0) localStorage.setItem('erp_invoices', JSON.stringify(invoices));
   }, [invoices]);
 
   useEffect(() => {
@@ -200,15 +257,15 @@ export default function App() {
   }, [cashBalance]);
 
   useEffect(() => {
-    localStorage.setItem('erp_suppliers', JSON.stringify(suppliers));
+    if (suppliers.length > 0) localStorage.setItem('erp_suppliers', JSON.stringify(suppliers));
   }, [suppliers]);
 
   useEffect(() => {
-    localStorage.setItem('erp_customers', JSON.stringify(customers));
+    if (customers.length > 0) localStorage.setItem('erp_customers', JSON.stringify(customers));
   }, [customers]);
 
   useEffect(() => {
-    localStorage.setItem('erp_products', JSON.stringify(products));
+    if (products.length > 0) localStorage.setItem('erp_products', JSON.stringify(products));
   }, [products]);
 
   useEffect(() => {
@@ -232,85 +289,111 @@ export default function App() {
   // ----------------------------------------------------
 
   // 1. Add Primary PO (issued by Superadmin)
-  const handleAddPrimaryPO = (newPO: PrimaryPO) => {
-    setPrimaryPOs([newPO, ...primaryPOs]);
+  const handleAddPrimaryPO = async (newPO: PrimaryPO) => {
+    try {
+      const { id, ...cleanPO } = newPO;
+      const inserted = await DbService.insertPrimaryPO({
+        ...cleanPO,
+        deptStatuses: newPO.deptStatuses || {}
+      });
+      setPrimaryPOs(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Supabase write failed for primary PO:', e);
+      alert(`Gagal menyimpan PO ke database Supabase:\n${e.message || e}`);
+      setPrimaryPOs(prev => [newPO, ...prev]);
+    }
   };
 
   // 2. Cancel Primary PO
-  const handleCancelPrimaryPO = (id: string) => {
-    setPrimaryPOs(primaryPOs.map(po => {
-      if (po.id === id) {
-        return { ...po, status: 'Cancelled' };
-      }
-      return po;
-    }));
+  const handleCancelPrimaryPO = async (id: string) => {
+    try {
+      await DbService.updatePrimaryPO(id, { status: 'Cancelled' });
+    } catch (e) {
+      console.error('Failed to cancel PO on Supabase:', e);
+    }
+    setPrimaryPOs(prev => prev.map(po => po.id === id ? { ...po, status: 'Cancelled' } : po));
   };
 
   // 3. Issue Department PO (issued by Department Supervisor)
-  const handleAddDeptPO = (newDeptPO: DepartmentPO) => {
-    setDeptPOs([newDeptPO, ...deptPOs]);
+  const handleAddDeptPO = async (newDeptPO: DepartmentPO) => {
+    try {
+      const { id, ...cleanDeptPO } = newDeptPO;
+      const insertedDeptPO = await DbService.insertDeptPO(cleanDeptPO);
+      setDeptPOs(prev => [insertedDeptPO, ...prev]);
 
-    // Automatically trigger purchasing log (COGS cost)
-    const subtotal = newDeptPO.totalPrice;
-    const tax = subtotal * 0.11; // 11% PPN
+      // Automatically trigger purchasing log
+      const subtotal = insertedDeptPO.totalPrice;
+      const tax = subtotal * 0.11;
+      const autoPurchaseLog: Omit<PurchasingLog, 'id'> = {
+        date: insertedDeptPO.orderDate,
+        purchaseNo: `PRC-AUTO-${Math.floor(100 + Math.random() * 900)}`,
+        secondaryPONumber: insertedDeptPO.secondaryPONumber,
+        supplier: insertedDeptPO.vendorName,
+        itemName: insertedDeptPO.itemName,
+        qty: insertedDeptPO.qty,
+        unit: insertedDeptPO.unit,
+        unitPrice: insertedDeptPO.unitPrice,
+        subtotal,
+        tax,
+        grandTotal: subtotal + tax,
+        status: 'Paid'
+      };
 
-    const autoPurchaseLog: PurchasingLog = {
-      id: `purchase-m-${Math.random().toString(36).substring(2, 9)}`,
-      date: newDeptPO.orderDate,
-      purchaseNo: `PRC-AUTO-${Math.floor(100 + Math.random() * 900)}`,
-      secondaryPONumber: newDeptPO.secondaryPONumber,
-      supplier: newDeptPO.vendorName,
-      itemName: newDeptPO.itemName,
-      qty: newDeptPO.qty,
-      unit: newDeptPO.unit,
-      unitPrice: newDeptPO.unitPrice,
-      subtotal,
-      tax,
-      grandTotal: subtotal + tax,
-      status: 'Paid'
-    };
+      const insertedPurchasing = await DbService.insertPurchasingLog(autoPurchaseLog);
+      setPurchasingLogs(prev => [insertedPurchasing, ...prev]);
 
-    setPurchasingLogs(prev => [autoPurchaseLog, ...prev]);
+      // Deduct cash balance for buying materials/services
+      setCashBalance(prev => prev - insertedPurchasing.grandTotal);
 
-    // Deduct cash balance for buying materials/services
-    setCashBalance(prev => prev - (subtotal + tax));
+      // Increase specific stock quantity in Supabase if matched
+      const matchedStock = stockItems.find(item => 
+        item.name.toLowerCase().includes(insertedDeptPO.itemName.toLowerCase()) || 
+        insertedDeptPO.itemName.toLowerCase().includes(item.name.toLowerCase())
+      );
 
-    // Increase specific stock quantity if category matches raw material
-    const matchedStock = stockItems.find(item => 
-      item.name.toLowerCase().includes(newDeptPO.itemName.toLowerCase()) || 
-      newDeptPO.itemName.toLowerCase().includes(item.name.toLowerCase())
-    );
-
-    if (matchedStock) {
-      setStockItems(stockItems.map(item => {
-        if (item.id === matchedStock.id) {
-          return { ...item, quantity: item.quantity + newDeptPO.qty };
-        }
-        return item;
-      }));
+      if (matchedStock) {
+        const newStockQty = matchedStock.quantity + insertedDeptPO.qty;
+        await DbService.updateStockItem(matchedStock.id, { quantity: newStockQty });
+        setStockItems(prev => prev.map(item => item.id === matchedStock.id ? { ...item, quantity: newStockQty } : item));
+      }
+    } catch (e: any) {
+      console.error('Supabase write failure during department PO issuance:', e);
+      alert(`Gagal meramal data ke Supabase:\n${e.message || e}`);
+      setDeptPOs(prev => [newDeptPO, ...prev]);
     }
   };
 
   // 4. Update Supervisor department progress states inside Parents Primary PO
-  const handleUpdatePrimaryDeptStatus = (
+  const handleUpdatePrimaryDeptStatus = async (
     poId: string, 
     dept: ManufacturingDepartment, 
     status: 'In Progress' | 'Action Taken' | 'Approved'
   ) => {
-    setPrimaryPOs(primaryPOs.map(po => {
-      if (po.id === poId) {
-        const updatedDeptStatuses = { ...po.deptStatuses, [dept]: status };
-        
-        // Calculate parent PO status based on progress of departments
-        let parentStatus = po.status;
-        const allStatuses = Object.values(updatedDeptStatuses);
-        
-        if (allStatuses.every(s => s === 'Approved')) {
-          parentStatus = 'Completed';
-        } else if (allStatuses.some(s => s === 'In Progress' || s === 'Action Taken' || s === 'Approved')) {
-          parentStatus = 'In Progress';
-        }
+    const targetPO = primaryPOs.find(po => po.id === poId);
+    if (!targetPO) return;
 
+    const updatedDeptStatuses = { ...targetPO.deptStatuses, [dept]: status };
+    
+    let parentStatus = targetPO.status;
+    const allStatuses = Object.values(updatedDeptStatuses);
+    
+    if (allStatuses.every(s => s === 'Approved')) {
+      parentStatus = 'Completed';
+    } else if (allStatuses.some(s => s === 'In Progress' || s === 'Action Taken' || s === 'Approved')) {
+      parentStatus = 'In Progress';
+    }
+
+    try {
+      await DbService.updatePrimaryPO(poId, {
+        status: parentStatus,
+        deptStatuses: updatedDeptStatuses
+      });
+    } catch (e) {
+      console.error('Failed updating department progress on Supabase:', e);
+    }
+
+    setPrimaryPOs(prev => prev.map(po => {
+      if (po.id === poId) {
         return {
           ...po,
           status: parentStatus,
@@ -322,110 +405,208 @@ export default function App() {
   };
 
   // 5. Add custom item to warehouse stock ledger
-  const handleAddStockItem = (newItem: StockItem) => {
-    setStockItems([newItem, ...stockItems]);
+  const handleAddStockItem = async (newItem: StockItem) => {
+    try {
+      const { id, ...cleanItem } = newItem;
+      const inserted = await DbService.insertStockItem(cleanItem);
+      setStockItems(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to save Stock Item to Supabase:', e);
+      alert(`Gagal menambah stok:\n${e.message || e}`);
+      setStockItems(prev => [newItem, ...prev]);
+    }
   };
 
   // 6. Manual Stock level adjustments
-  const handleUpdateStockQty = (id: string, newQty: number) => {
-    setStockItems(stockItems.map(item => {
-      if (item.id === id) {
-        return { ...item, quantity: newQty };
-      }
-      return item;
-    }));
+  const handleUpdateStockQty = async (id: string, newQty: number) => {
+    try {
+      await DbService.updateStockItem(id, { quantity: newQty });
+    } catch (e) {
+      console.error('Failed updating stock quantity on Supabase:', e);
+    }
+    setStockItems(prev => prev.map(item => item.id === id ? { ...item, quantity: newQty } : item));
   };
 
   // 7. Manual Purchase Entry Additions
-  const handleAddPurchasingLog = (newPurchase: PurchasingLog) => {
-    setPurchasingLogs([newPurchase, ...purchasingLogs]);
-    setCashBalance(prev => prev - newPurchase.grandTotal);
+  const handleAddPurchasingLog = async (newPurchase: PurchasingLog) => {
+    try {
+      const { id, ...cleanPurchase } = newPurchase;
+      const inserted = await DbService.insertPurchasingLog(cleanPurchase);
+      setPurchasingLogs(prev => [inserted, ...prev]);
+      setCashBalance(prev => prev - inserted.grandTotal);
+    } catch (e: any) {
+      console.error('Failed to create purchase ledger entry on Supabase:', e);
+      alert(`Gagal mencatat transaksi pembelian:\n${e.message || e}`);
+      setPurchasingLogs(prev => [newPurchase, ...prev]);
+      setCashBalance(prev => prev - newPurchase.grandTotal);
+    }
   };
 
   // 8. Manual Sales Entry Additions
-  const handleAddSalesLog = (newSale: SalesLog) => {
-    setSalesLogs([newSale, ...salesLogs]);
-    setCashBalance(prev => prev + newSale.grandTotal);
+  const handleAddSalesLog = async (newSale: SalesLog) => {
+    try {
+      const { id, ...cleanSale } = newSale;
+      const inserted = await DbService.insertSalesLog(cleanSale);
+      setSalesLogs(prev => [inserted, ...prev]);
+      setCashBalance(prev => prev + inserted.grandTotal);
+    } catch (e: any) {
+      console.error('Failed to create sales ledger entry on Supabase:', e);
+      alert(`Gagal mencatat transaksi penjualan:\n${e.message || e}`);
+      setSalesLogs(prev => [newSale, ...prev]);
+      setCashBalance(prev => prev + newSale.grandTotal);
+    }
   };
 
   // 9. Register Client Invoice (Penagihan)
-  const handleAddInvoice = (newInvoice: Invoice) => {
-    setInvoices([newInvoice, ...invoices]);
+  const handleAddInvoice = async (newInvoice: Invoice) => {
+    try {
+      const { id, ...cleanInvoice } = newInvoice;
+      const inserted = await DbService.insertInvoice(cleanInvoice);
+      setInvoices(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to issue client invoice to Supabase:', e);
+      alert(`Gagal menerbitkan Invoice ke Supabase:\n${e.message || e}`);
+      setInvoices(prev => [newInvoice, ...prev]);
+    }
   };
 
   // 10. Pay Invoice (Client settling commercial bills)
-  const handlePayInvoice = (id: string) => {
-    setInvoices(invoices.map(inv => {
-      if (inv.id === id) {
-        // Find corresponding parent PO
-        const matchedPO = primaryPOs.find(p => p.id === inv.primaryPOId);
-        
-        // Register sales entry in logs
-        const newSale: SalesLog = {
-          id: `sales-auto-${Math.random().toString(36).substring(2, 9)}`,
-          date: new Date().toISOString().split('T')[0],
-          salesNo: `SLS-AUTO-${Math.floor(100 + Math.random() * 900)}`,
-          primaryPONumber: inv.primaryPONumber,
-          clientName: inv.clientName,
-          itemName: matchedPO ? matchedPO.itemName : inv.items[0]?.description || 'Custom Job Delivery',
-          qty: matchedPO ? matchedPO.qty : 1,
-          unit: matchedPO ? matchedPO.unit : 'pcs',
-          unitPrice: matchedPO ? matchedPO.unitPrice : inv.subtotal,
-          subtotal: inv.subtotal,
-          tax: inv.tax,
-          grandTotal: inv.grandTotal,
-          status: 'Paid'
-        };
-        
-        setSalesLogs(prev => [newSale, ...prev]);
+  const handlePayInvoice = async (id: string) => {
+    const inv = invoices.find(i => i.id === id);
+    if (!inv) return;
 
-        // Inject/Add Cash Balance
-        setCashBalance(prev => prev + inv.grandTotal);
+    const matchedPO = primaryPOs.find(p => p.id === inv.primaryPOId);
+    const currentDateStr = new Date().toISOString().split('T')[0];
 
-        return { 
-          ...inv, 
+    try {
+      // Create new sales log in Supabase
+      const autoSale: Omit<SalesLog, 'id'> = {
+        date: currentDateStr,
+        salesNo: `SLS-AUTO-${Math.floor(100 + Math.random() * 900)}`,
+        primaryPONumber: inv.primaryPONumber,
+        clientName: inv.clientName,
+        itemName: matchedPO ? matchedPO.itemName : inv.items[0]?.description || 'Custom Job Delivery',
+        qty: matchedPO ? matchedPO.qty : 1,
+        unit: matchedPO ? matchedPO.unit : 'pcs',
+        unitPrice: matchedPO ? matchedPO.unitPrice : inv.subtotal,
+        subtotal: inv.subtotal,
+        tax: inv.tax,
+        grandTotal: inv.grandTotal,
+        status: 'Paid'
+      };
+
+      const [updatedInvoice, insertedSale] = await Promise.all([
+        DbService.updateInvoice(id, {
           status: 'Paid',
-          paymentDate: new Date().toISOString().split('T')[0]
-        };
-      }
-      return inv;
-    }));
+          paymentDate: currentDateStr
+        }),
+        DbService.insertSalesLog(autoSale)
+      ]);
+
+      setInvoices(prev => prev.map(i => i.id === id ? updatedInvoice : i));
+      setSalesLogs(prev => [insertedSale, ...prev]);
+      setCashBalance(prev => prev + updatedInvoice.grandTotal);
+    } catch (e: any) {
+      console.error('Failed paying invoice via Supabase:', e);
+      alert(`Gagal melunasi invoice via Supabase:\n${e.message || e}`);
+    }
   };
 
   // 11. SPT Tax Payment
   const handlePayTaxes = (amountToPay: number) => {
     setCashBalance(prev => prev - amountToPay);
+    alert(`Pembayaran SPT PPN sebesar ${formatIDR(amountToPay)} sukses diproses secara lokal.`);
   };
 
   // Master Data Mutators
-  const handleAddSupplier = (newSupplier: Supplier) => {
-    setSuppliers([newSupplier, ...suppliers]);
+  const handleAddSupplier = async (newSupplier: Supplier) => {
+    try {
+      const { id, ...clean } = newSupplier;
+      const inserted = await DbService.insertSupplier(clean);
+      setSuppliers(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to add supplier to Supabase:', e);
+      alert(`Gagal menambah supplier:\n${e.message || e}`);
+      setSuppliers(prev => [newSupplier, ...prev]);
+    }
   };
-  const handleUpdateSupplier = (updated: Supplier) => {
-    setSuppliers(suppliers.map(s => s.id === updated.id ? updated : s));
+  const handleUpdateSupplier = async (updated: Supplier) => {
+    try {
+      const updatedRow = await DbService.updateSupplier(updated.id, updated);
+      setSuppliers(prev => prev.map(s => s.id === updated.id ? updatedRow : s));
+    } catch (e: any) {
+      console.error('Failed to update supplier on Supabase:', e);
+      alert(`Gagal mengupdate supplier:\n${e.message || e}`);
+    }
   };
-  const handleDeleteSupplier = (id: string) => {
-    setSuppliers(suppliers.filter(s => s.id !== id));
+  const handleDeleteSupplier = async (id: string) => {
+    try {
+      await DbService.deleteSupplier(id);
+      setSuppliers(prev => prev.filter(s => s.id !== id));
+    } catch (e: any) {
+      console.error('Failed to delete supplier from Supabase:', e);
+      alert(`Gagal menghapus supplier:\n${e.message || e}`);
+    }
   };
 
-  const handleAddCustomer = (newCustomer: Customer) => {
-    setCustomers([newCustomer, ...customers]);
+  const handleAddCustomer = async (newCustomer: Customer) => {
+    try {
+      const { id, ...clean } = newCustomer;
+      const inserted = await DbService.insertCustomer(clean);
+      setCustomers(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to add customer to Supabase:', e);
+      alert(`Gagal menambah customer:\n${e.message || e}`);
+      setCustomers(prev => [newCustomer, ...prev]);
+    }
   };
-  const handleUpdateCustomer = (updated: Customer) => {
-    setCustomers(customers.map(c => c.id === updated.id ? updated : c));
+  const handleUpdateCustomer = async (updated: Customer) => {
+    try {
+      const updatedRow = await DbService.updateCustomer(updated.id, updated);
+      setCustomers(prev => prev.map(c => c.id === updated.id ? updatedRow : c));
+    } catch (e: any) {
+      console.error('Failed to update customer on Supabase:', e);
+      alert(`Gagal mengupdate customer:\n${e.message || e}`);
+    }
   };
-  const handleDeleteCustomer = (id: string) => {
-    setCustomers(customers.filter(c => c.id !== id));
+  const handleDeleteCustomer = async (id: string) => {
+    try {
+      await DbService.deleteCustomer(id);
+      setCustomers(prev => prev.filter(c => c.id !== id));
+    } catch (e: any) {
+      console.error('Failed to delete customer from Supabase:', e);
+      alert(`Gagal menghapus customer:\n${e.message || e}`);
+    }
   };
 
-  const handleAddProduct = (newProduct: Product) => {
-    setProducts([newProduct, ...products]);
+  const handleAddProduct = async (newProduct: Product) => {
+    try {
+      const { id, ...clean } = newProduct;
+      const inserted = await DbService.insertProduct(clean);
+      setProducts(prev => [inserted, ...prev]);
+    } catch (e: any) {
+      console.error('Failed to add product to Supabase:', e);
+      alert(`Gagal menambah katalog produk:\n${e.message || e}`);
+      setProducts(prev => [newProduct, ...prev]);
+    }
   };
-  const handleUpdateProduct = (updated: Product) => {
-    setProducts(products.map(p => p.id === updated.id ? updated : p));
+  const handleUpdateProduct = async (updated: Product) => {
+    try {
+      const updatedRow = await DbService.updateProduct(updated.id, updated);
+      setProducts(prev => prev.map(p => p.id === updated.id ? updatedRow : p));
+    } catch (e: any) {
+      console.error('Failed to update product on Supabase:', e);
+      alert(`Gagal mengupdate katalog produk:\n${e.message || e}`);
+    }
   };
-  const handleDeleteProduct = (id: string) => {
-    setProducts(products.filter(p => p.id !== id));
+  const handleDeleteProduct = async (id: string) => {
+    try {
+      await DbService.deleteProduct(id);
+      setProducts(prev => prev.filter(p => p.id !== id));
+    } catch (e: any) {
+      console.error('Failed to delete product from Supabase:', e);
+      alert(`Gagal menghapus katalog produk:\n${e.message || e}`);
+    }
   };
 
   // Navigation menu items map representing all tabs
@@ -453,6 +634,29 @@ export default function App() {
       alert(`Role simulasian Anda (${userRole}) tidak diizinkan mengakses halaman '${tabId}'!`);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center font-sans text-slate-300" id="erp-sync-initial-loader">
+        <div className="text-center space-y-4 max-w-md px-6">
+          <div className="flex justify-center p-4">
+            <Cpu className="w-12 h-12 text-indigo-500 animate-spin" />
+          </div>
+          <div>
+            <h1 className="text-lg font-extrabold text-white tracking-tight">Indotech ERP System</h1>
+            <p className="text-xs text-slate-400 font-medium">Manufaktur Presisi Terintegrasi Cloud</p>
+          </div>
+          <div className="py-2 bg-slate-950/40 rounded-xl px-4 inline-flex items-center gap-2 border border-slate-800 animate-pulse">
+            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+            <span className="text-[11px] font-bold text-slate-300 font-mono tracking-tight">{syncStatus}</span>
+          </div>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            Menghubungkan ke live database di Supabase. Jika koneksi bermasalah atau belum bermigrasi penuh, aplikasi akan memuat data offline cadangan agar workflow tetap berjalan lancar.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex font-sans" id="erp-master-shell">
@@ -540,9 +744,27 @@ export default function App() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-slate-700">
-              <ShieldCheck className="w-4.5 h-4.5 text-indigo-600" />
-              <span>Multi-Role Access Control Simulator</span>
+            <div className="hidden sm:flex items-center gap-4 text-xs font-bold text-slate-700">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4.5 h-4.5 text-indigo-600" />
+                <span>Multi-Role Access Control Simulator</span>
+              </div>
+              <div id="supabase-sync-indicator" className={`flex items-center gap-1.5 border px-2.5 py-1 rounded-full shadow-sm text-[11px] font-bold transition-all duration-300 ${
+                syncStatus.includes('Terhubung')
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : syncStatus.includes('Offline')
+                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                    : 'bg-indigo-50 border-indigo-150 text-indigo-700 animate-pulse'
+              }`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${
+                  syncStatus.includes('Terhubung')
+                    ? 'bg-emerald-500'
+                    : syncStatus.includes('Offline')
+                      ? 'bg-amber-500'
+                      : 'bg-indigo-500 animate-ping'
+                }`} />
+                <span>Supabase: {syncStatus}</span>
+              </div>
             </div>
           </div>
 
