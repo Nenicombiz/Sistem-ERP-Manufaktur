@@ -17,7 +17,8 @@ import {
   Eye,
   X,
   CreditCard,
-  Building
+  Building,
+  Download
 } from 'lucide-react';
 
 interface InvoicingViewProps {
@@ -109,6 +110,54 @@ export default function InvoicingView({
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadReceiptText = () => {
+    if (!selectedInvoice) return;
+    const itemsText = selectedInvoice.items.map(item => 
+      `- ${item.description}\n  Qty: ${item.qty} ${item.unit} | Harga Satuan: ${formatIDR(item.unitPrice)} | Total: ${formatIDR(item.total)}`
+    ).join('\n');
+
+    const textContent = `==================================================
+          PT. GLOBAL MANUFAKTUR PRESISI
+==================================================
+FAKTUR KOMERSIAL / INVOICE PENAGIHAN
+
+Faktur No    : ${selectedInvoice.invoiceNo}
+Rujukan PO   : ${selectedInvoice.primaryPONumber}
+Tanggal      : ${selectedInvoice.dateCreated}
+Jatuh Tempo  : ${selectedInvoice.dueDate}
+Status       : ${selectedInvoice.status}
+
+Ditagihkan Kepada (Bill To):
+Nama Perusahaan : ${selectedInvoice.clientName}
+Alamat          : ${selectedInvoice.clientAddress}
+
+--------------------------------------------------
+DETAIL PEKERJAAN / PRODUK:
+${itemsText}
+
+--------------------------------------------------
+Subtotal DPP : ${formatIDR(selectedInvoice.subtotal)}
+PPN (11%)    : ${formatIDR(selectedInvoice.tax)}
+Grand Total  : ${formatIDR(selectedInvoice.grandTotal)}
+
+Catatan Pembayaran & Rekening:
+${selectedInvoice.notes}
+Transfer Bank Mandiri Cabang Cikarang
+No. Rekening : 156-00-149221-1
+Atas Nama    : PT. Global Manufaktur Presisi
+==================================================
+`;
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `nota-invoice-${selectedInvoice.invoiceNo}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -278,6 +327,13 @@ export default function InvoicingView({
                     className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 font-extrabold text-xxs rounded flex items-center gap-1.5"
                   >
                     <Printer className="w-3.5 h-3.5" /> Simulasi Cetak Cetak Faktur/PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadReceiptText}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-extrabold text-xxs rounded flex items-center gap-1.5 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Unduh Dokumen Nota (.txt)
                   </button>
                 </div>
               </div>

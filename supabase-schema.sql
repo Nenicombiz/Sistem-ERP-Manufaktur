@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS primary_pos (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE primary_pos ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
+ALTER TABLE primary_pos ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id) ON DELETE SET NULL;
+
 -- Tabel PO Sekunder Internal (Kebutuhan Material/Jasa Outsource Departemen)
 CREATE TABLE IF NOT EXISTS department_pos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

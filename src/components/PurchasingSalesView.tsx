@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { PurchasingLog, SalesLog } from '../types';
+import { PurchasingLog, SalesLog, Supplier, Customer, Product, PrimaryPO } from '../types';
 import { formatIDR, generateId } from '../utils';
 import { 
   DollarSign, 
@@ -19,6 +19,10 @@ import {
 interface PurchasingSalesViewProps {
   purchasingLogs: PurchasingLog[];
   salesLogs: SalesLog[];
+  suppliers: Supplier[];
+  customers: Customer[];
+  products: Product[];
+  primaryPos: PrimaryPO[];
   onAddPurchasingLog: (newPurchase: PurchasingLog) => void;
   onAddSalesLog: (newSale: SalesLog) => void;
 }
@@ -26,6 +30,10 @@ interface PurchasingSalesViewProps {
 export default function PurchasingSalesView({
   purchasingLogs,
   salesLogs,
+  suppliers,
+  customers,
+  products,
+  primaryPos,
   onAddPurchasingLog,
   onAddSalesLog
 }: PurchasingSalesViewProps) {
@@ -226,29 +234,43 @@ export default function PurchasingSalesView({
       {/* Manuel Forms */}
       {showPurchaseForm && activeTab === 'purchasing' && (
         <form onSubmit={submitPurchase} className="bg-white p-5 rounded-xl border border-rose-200 shadow-lg space-y-4">
-          <h3 className="text-xs font-extrabold uppercase tracking-wide text-rose-700">Form Pengeluaran / Pembelian Suku Cadang Manual</h3>
+          <h3 className="text-xs font-extrabold uppercase tracking-wide text-rose-700">Form Pengeluaran / Pembelian Suku Cadang Manual (Saved to: `purchasing_logs` table)</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Nama Supplier / Kontraktor</label>
-              <input
-                type="text"
+              <select
                 required
-                placeholder="cth. PT. Central Teknik Cikarang"
-                value={ supplier }
+                value={supplier}
                 onChange={e => setSupplier(e.target.value)}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
-              />
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="">-- Pilih Supplier --</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.name}>{s.name} ({s.code})</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Material / Jasa Yang Dibeli</label>
-              <input
-                type="text"
+              <select
                 required
-                placeholder="cth. Sensor Omron PNP E2E"
-                value={ pItemName }
-                onChange={e => setPItemName(e.target.value)}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
-              />
+                value={pItemName}
+                onChange={e => {
+                  const val = e.target.value;
+                  setPItemName(val);
+                  const found = products.find(p => p.name === val);
+                  if (found) {
+                    setPUnit(found.unit || 'pcs');
+                    setPUnitPrice(found.defaultPrice || 0);
+                  }
+                }}
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="">-- Pilih Material/Barang --</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.name}>[{p.code}] {p.name}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Qty & Satuan</label>
@@ -297,29 +319,43 @@ export default function PurchasingSalesView({
 
       {showSalesForm && activeTab === 'sales' && (
         <form onSubmit={submitSale} className="bg-white p-5 rounded-xl border border-emerald-200 shadow-lg space-y-4">
-          <h3 className="text-xs font-extrabold uppercase tracking-wide text-emerald-700">Form Pendapatan / Penjualan Manual</h3>
+          <h3 className="text-xs font-extrabold uppercase tracking-wide text-emerald-700">Form Pendapatan / Penjualan Manual (Saved to: `sales_logs` table)</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Klien / Buyer PT Nama</label>
-              <input
-                type="text"
+              <select
                 required
-                placeholder="cth. PT. Astra Honda Motor"
-                value={ clientName }
+                value={clientName}
                 onChange={e => setClientName(e.target.value)}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
-              />
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="">-- Pilih Customer --</option>
+                {customers.map(c => (
+                  <option key={c.id} value={c.name}>{c.name} ({c.code})</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Produk Hasil Produksi / Lot Terjual</label>
-              <input
-                type="text"
+              <select
                 required
-                placeholder="cth. Bracket Assy Honda Brio Set"
-                value={ sItemName }
-                onChange={e => setSItemName(e.target.value)}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
-              />
+                value={sItemName}
+                onChange={e => {
+                  const val = e.target.value;
+                  setSItemName(val);
+                  const found = products.find(p => p.name === val);
+                  if (found) {
+                    setSUnit(found.unit || 'pcs');
+                    setSUnitPrice(found.defaultPrice || 0);
+                  }
+                }}
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="">-- Pilih Produk/Barang --</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.name}>[{p.code}] {p.name}</option>
+                ))}
+              </select>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Qty & Satuan</label>
@@ -358,13 +394,16 @@ export default function PurchasingSalesView({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Hubungkan Ke No PO (Jika Ada)</label>
-              <input
-                type="text"
-                placeholder="cth. PO-M-2026-001"
+              <select
                 value={parentPONumber}
                 onChange={e => setParentPONumber(e.target.value)}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
-              />
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="">-- Manual/None atau Pilih PO Rujukan --</option>
+                {primaryPos.map(po => (
+                  <option key={po.id} value={po.poNumber}>{po.poNumber} ({po.itemName})</option>
+                ))}
+              </select>
             </div>
           </div>
 

@@ -490,6 +490,9 @@ CREATE TABLE IF NOT EXISTS primary_pos (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+ALTER TABLE primary_pos ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
+ALTER TABLE primary_pos ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS department_pos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     parent_po_id UUID REFERENCES primary_pos(id) ON DELETE CASCADE,
@@ -576,8 +579,90 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- ==========================================
 -- 5. TRIGGER AUTOMATIC TAX CALCULATIONS (PPN 11%)
--- CREATE OR REPLACE FUNCTION calculate_taxes_and_totals()... (Bisa dicatatkan di database)
+-- ==========================================
+-- Menjamin audit kepatuhan perpajakan bernilai presisi
+CREATE OR REPLACE FUNCTION calculate_taxes_and_totals()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.subtotal := NEW.qty * NEW.unit_price;
+    NEW.tax := NEW.subtotal * 0.11; -- Hitung otomatis PPn 11% UU HPP
+    NEW.grand_total := NEW.subtotal + NEW.tax;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger untuk Log Pembelian
+CREATE OR REPLACE TRIGGER trg_calculate_purchasing_tax
+BEFORE INSERT OR UPDATE ON purchasing_logs
+FOR EACH ROW
+EXECUTE FUNCTION calculate_taxes_and_totals();
+
+-- Trigger untuk Log Penjualan
+CREATE OR REPLACE TRIGGER trg_calculate_sales_tax
+BEFORE INSERT OR UPDATE ON sales_logs
+FOR EACH ROW
+EXECUTE FUNCTION calculate_taxes_and_totals();
+
+
+-- ==========================================
+-- 6. SEED DATA REVOLUSINER (INDOTECH INITIAL DATA)
+-- ==========================================
+
+-- Seed Customers
+INSERT INTO customers (code, name, phone, email, address, industry) VALUES
+('C-001', 'Astra Otoparts Tbk', '(021) 4603550', 'procurement@astra-otoparts.co.id', 'Jl. Raya Pegangsaan Dua Km. 2.2, Kelapa Gading, Jakarta Utara', 'Automotive'),
+('C-002', 'Polytron Indonesia', '(0291) 431001', 'b2b-sales@polytron.co.id', 'Jl. K.H. Achmad Dahlan No.110, Kudus, Jawa Tengah', 'Electronics'),
+('C-003', 'Komatsu Indonesia Tbk', '(021) 4401925', 'vendor-relations@komatsu.co.id', 'Jl. Raya Cakung Cilincing No.4, Jakarta Timur', 'Heavy Equipment');
+
+-- Seed Suppliers
+INSERT INTO suppliers (code, name, phone, email, address, category) VALUES
+('S-001', 'Krakatau Steel Tbk', '(0254) 371111', 'sales@krakatausteel.com', 'Jl. Industri No.5, Cilegon, Banten', 'Baja'),
+('S-002', 'Indo Resin Makmur PT', '(021) 5902123', 'order@indoresin.com', 'Kawasan Industri Jatake Blok C No.2, Tangerang', 'Plastik Resin'),
+('S-003', 'Fuji Electric Corp Jakarta', '(021) 5200234', 'part-admin@fuji-electric.co.id', 'Menara Thamrin Lt.12, Menteng, Jakarta Pusat', 'Standard Parts'),
+('S-004', 'Multi Teknik Outsource', '(021) 8904455', 'bengkel@multiteknik.co.id', 'Kawasan Industri Jababeka Tahap I, Cikarang', 'Jasa Outsource');
+
+-- Seed Products
+INSERT INTO products (code, name, category, unit, default_price, description) VALUES
+('P-DIE', 'Progessive Die Tooling Set v2', 'Project', 'set', 125000000.00, 'Dies cetakan panel baja eksternal mobil tipe MPV'),
+('P-STP', 'Stamping bracket motor 1.5mm SCPH', 'Component', 'pcs', 18500.00, 'Bracket pemasangan motor kelistrikan presisi medium'),
+('P-MCH', 'Shaft Stainless Machined Grade-S', 'MassPro Machining', 'pcs', 42000.00, 'Shaft berbahan SUS316 berkepresisian 0.01mm'),
+('P-SPC', 'Spacer Bush Alu-6061 spacer v1', 'Standard Part', 'pcs', 12500.00, 'Spacer bushing komponen pengisi ruang perakitan jig');
+
+-- Seed Stock Items
+INSERT INTO stock_items (code, name, category, quantity, unit, unit_cost, min_stock, location, vendor) VALUES
+('RM-STEEL-01', 'Baja Plat Lembaran SPCC 1.2mm x 1200 x 2400', 'Raw Material', 85.00, 'sheet', 420000.00, 15.00, 'Gudang Utama A-04', 'Krakatau Steel Tbk'),
+('RM-RESIN-02', 'ABS Resin Granules Black Grade-A', 'Raw Material', 1200.00, 'kg', 35000.00, 300.00, 'Gudang Kimia B-01', 'Indo Resin Makmur PT'),
+('SP-SREW-01', 'Socket Head Cap Screw M6 x 20 SUS304', 'Standard Part', 450.00, 'pcs', 2450.00, 100.00, 'Rak Komponen Standard C-12', 'Fuji Electric Corp Jakarta');
+
+-- Seed Primary POs
+INSERT INTO primary_pos (po_number, category, project_name, item_name, part_no, qty, unit, unit_price, status, dept_statuses, notes) VALUES
+('PO-2026-0089', 'Project', 'Astra Engine Cover Mold v21', 'Astra Progressive Die Tooling Set v2', 'PRT-90812-B', 1, 'set', 125000000.00, 'In Progress', '{"Design Mekanik": "Approved", "Design Electric": "Approved", "Proccessing": "In Progress"}', 'Produksi dies presisi tinggi untuk cover mesin atas.'),
+('PO-2026-0090', 'Component', 'Polytron Cabinet Bracket 2026', 'Stamping Bracket Motor 1.5mm SCPH', 'PRT-88712-K', 12000, 'pcs', 18500.00, 'In Progress', '{"MassPro Stamping": "In Progress", "Quality Control": "Waiting"}', 'Toleransi ketebalan tipis 1.5mm harus ditaati.'),
+('PO-2026-0091', 'MassPro Machining', 'Komatsu Excavator Shafts X-09', 'Shaft Stainless Machined Grade-S', 'SHF-EXE-091', 1200, 'pcs', 42000.00, 'Completed', '{"PPIC Delivery": "Approved", "Proccessing": "Approved", "Quality Control": "Approved"}', 'Pengiriman rampung. Telah di bayar lunas.');
+
+-- Seed Department POs (PO Sekunder Instansi)
+INSERT INTO department_pos (parent_po_number, department_issuer, secondary_po_number, vendor_name, item_name, qty, unit, unit_price, status, notes) VALUES
+('PO-2026-0089', 'Proccessing', 'PRC-DEPT-9011', 'Krakatau Steel Tbk', 'Baja Plat Lembaran SPCC 1.2mm x 1200 x 2400', 10, 'sheet', 420000.00, 'Received', 'Bahan tooling mold'),
+('PO-2026-0090', 'Pembelian', 'PRC-DEPT-9012', 'Multi Teknik Outsource', 'Jasa Permesinan Kawat WEDM Presisi', 1, 'job', 4500000.00, 'Paid', 'WEDM Punch & Insert cetakan');
+
+-- Seed Purchasing Logs (COGS Biaya Realistis)
+INSERT INTO purchasing_logs (date, purchase_no, secondary_po_number, supplier, item_name, qty, unit, unit_price, subtotal, tax, grand_total, status) VALUES
+('2026-06-01', 'PRC-TX-00912', 'PRC-DEPT-9011', 'Krakatau Steel Tbk', 'Baja Plat Lembaran SPCC 1.2mm x 1200 x 2400', 10, 'sheet', 420000.00, 4200000.00, 462000.00, 4662000.00, 'Paid'),
+('2026-06-03', 'PRC-TX-00913', 'PRC-DEPT-9012', 'Multi Teknik Outsource', 'Jasa Permesinan Kawat WEDM Presisi', 1, 'job', 4500000.00, 4500000.00, 495000.00, 4995000.00, 'Paid');
+
+-- Seed Sales Logs (Pendapatan Terverifikasi)
+INSERT INTO sales_logs (date, sales_no, primary_po_number, client_name, item_name, qty, unit, unit_price, subtotal, tax, grand_total, status) VALUES
+('2026-06-08', 'SLS-TX-00109', 'PO-2026-0091', 'Komatsu Indonesia Tbk', 'Shaft Stainless Machined Grade-S', 1200, 'pcs', 42000.00, 50400000.00, 5544000.00, 55944000.00, 'Paid');
+
+-- Seed Invoices (Invoice Klien Aktif)
+INSERT INTO invoices (invoice_no, date_created, due_date, client_name, client_address, primary_po_number, subtotal, tax, grand_total, status, notes) VALUES
+('INV-2026-00089', '2026-06-05', '2026-07-05', 'Astra Otoparts Tbk', 'Jl. Raya Pegangsaan Dua Km. 2.2, Kelapa Gading, Jakarta Utara', 'PO-2026-0089', 125000000.00, 13750000.00, 138750000.00, 'Unpaid', 'Penerbitan termin pertama 100% setelah penyerahan Dies Tooling.');
+
+-- ==========================================
+-- END OF SCRIPT
+-- ==========================================
 `;
 
   const handleCopyToClipboard = () => {

@@ -230,7 +230,9 @@ export default function SuperadminView({
       targetDepartments: targetDepts,
       status: 'Pending',
       deptStatuses,
-      notes: notes.trim()
+      notes: notes.trim(),
+      customerId: selectedCustomerId || undefined,
+      productId: selectedProductTemplateId || undefined
     };
 
     onAddPrimaryPO(newPO);

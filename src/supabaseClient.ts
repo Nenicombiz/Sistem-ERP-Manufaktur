@@ -48,7 +48,9 @@ export function mapFromDbPrimaryPO(row: any): PrimaryPO {
     targetDepartments: row.target_departments || [],
     status: row.status,
     deptStatuses: row.dept_statuses || {},
-    notes: row.notes || ''
+    notes: row.notes || '',
+    customerId: row.customer_id || undefined,
+    productId: row.product_id || undefined
   };
 }
 
@@ -68,6 +70,8 @@ export function mapToDbPrimaryPO(po: Partial<PrimaryPO>): any {
   if (po.status !== undefined) row.status = po.status;
   if (po.deptStatuses !== undefined) row.dept_statuses = po.deptStatuses;
   if (po.notes !== undefined) row.notes = po.notes;
+  if (po.customerId !== undefined) row.customer_id = po.customerId && isUUID(po.customerId) ? po.customerId : null;
+  if (po.productId !== undefined) row.product_id = po.productId && isUUID(po.productId) ? po.productId : null;
   return row;
 }
 

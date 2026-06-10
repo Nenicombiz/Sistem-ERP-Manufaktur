@@ -865,6 +865,8 @@ export default function App() {
           {currentTab === 'stock' && (
             <InventoryView 
               stockItems={stockItems}
+              products={products}
+              suppliers={suppliers}
               onAddStockItem={handleAddStockItem}
               onUpdateStockQty={handleUpdateStockQty}
             />
@@ -874,6 +876,10 @@ export default function App() {
             <PurchasingSalesView 
               purchasingLogs={purchasingLogs}
               salesLogs={salesLogs}
+              suppliers={suppliers}
+              customers={customers}
+              products={products}
+              primaryPos={primaryPOs}
               onAddPurchasingLog={handleAddPurchasingLog}
               onAddSalesLog={handleAddSalesLog}
             />

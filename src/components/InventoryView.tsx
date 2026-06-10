@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { StockItem } from '../types';
+import { StockItem, Product, Supplier } from '../types';
 import { formatIDR } from '../utils';
 import { 
   Package, 
@@ -14,34 +14,80 @@ import {
   Settings, 
   ExternalLink,
   ChevronDown,
-  Wrench
+  Wrench,
+  Link
 } from 'lucide-react';
 
 interface InventoryViewProps {
   stockItems: StockItem[];
+  products: Product[];
+  suppliers: Supplier[];
   onAddStockItem: (newItem: StockItem) => void;
   onUpdateStockQty: (id: string, newQty: number) => void;
 }
 
 export default function InventoryView({
   stockItems,
+  products,
+  suppliers,
   onAddStockItem,
   onUpdateStockQty
 }: InventoryViewProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<'All' | StockItem['category']>('All');
+  const [categoryFilter, setCategoryFilter] = useState<string>('All');
 
   // Form states for manual additions
   const [showAddForm, setShowAddForm] = useState(false);
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [category, setCategory] = useState<StockItem['category']>('Raw Material');
+  const [category, setCategory] = useState<string>('Raw Material');
   const [quantity, setQuantity] = useState<number>(0);
   const [unit, setUnit] = useState('pcs');
   const [unitCost, setUnitCost] = useState<number>(0);
   const [minStock, setMinStock] = useState<number>(10);
   const [location, setLocation] = useState('');
   const [vendor, setVendor] = useState('');
+
+  const [selectedProductTemplateId, setSelectedProductTemplateId] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
+
+  const handleSelectProductTemplate = (prodId: string) => {
+    setSelectedProductTemplateId(prodId);
+    if (!prodId) {
+      setCode('');
+      setName('');
+      return;
+    }
+    const prod = products.find(p => p.id === prodId);
+    if (prod) {
+      setCode(prod.code);
+      setName(prod.name);
+      
+      let mappedCat = 'Raw Material';
+      if (prod.category === 'Standard Part') {
+        mappedCat = 'Standard Part';
+      } else if (prod.category === 'Component') {
+        mappedCat = 'Sub-Assembly';
+      } else if (prod.category === 'MassPro Injection' || prod.category === 'MassPro Machining' || prod.category === 'MassPro Stamping') {
+        mappedCat = 'Finished Goods';
+      }
+      setCategory(mappedCat);
+      setUnit(prod.unit || 'pcs');
+      setUnitCost(prod.defaultPrice || 0);
+    }
+  };
+
+  const handleSelectSupplier = (supplierId: string) => {
+    setSelectedSupplierId(supplierId);
+    if (!supplierId) {
+      setVendor('');
+      return;
+    }
+    const sup = suppliers.find(s => s.id === supplierId);
+    if (sup) {
+      setVendor(sup.name);
+    }
+  };
 
   // Stock Adjustment State
   const [adjustmentItemId, setAdjustmentItemId] = useState<string | null>(null);
@@ -78,6 +124,8 @@ export default function InventoryView({
     setMinStock(10);
     setLocation('');
     setVendor('');
+    setSelectedProductTemplateId('');
+    setSelectedSupplierId('');
   };
 
   const handleAdjustSubmit = (id: string) => {
@@ -122,6 +170,43 @@ export default function InventoryView({
         <form onSubmit={handleSubmit} className="bg-white p-5 rounded-xl border border-indigo-200 shadow-md space-y-4">
           <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-2">Registrasi Suku Cadang/Bahan Baku Baru</h3>
           
+          {/* MASTER DATA CONNECTION SHIELDS */}
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-dashed border-indigo-200 space-y-3">
+            <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
+              <Link className="w-3.5 h-3.5 text-indigo-600 animate-pulse" /> Hubung & Autofill dari Master Data:
+            </span>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-extrabold text-slate-700 block">Hubung ke Master Product (Barang)</label>
+                <select
+                  value={selectedProductTemplateId}
+                  onChange={e => handleSelectProductTemplate(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-medium"
+                >
+                  <option value="">-- Manual Typist (Ketik Manual) --</option>
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>[{p.code}] {p.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-extrabold text-slate-700 block">Hubung ke Master Supplier (Rekanan)</label>
+                <select
+                  value={selectedSupplierId}
+                  onChange={e => handleSelectSupplier(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-medium"
+                >
+                  <option value="">-- Manual Typist (Ketik Manual) --</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Kode Suku Cadang (Part No/SKU)</label>
@@ -147,16 +232,14 @@ export default function InventoryView({
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-600">Kategori</label>
-              <select
+              <input
+                type="text"
+                required
+                placeholder="cth. Raw Material, Standard Part, dll."
                 value={category}
-                onChange={e => setCategory(e.target.value as StockItem['category'])}
-                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg bg-white"
-              >
-                <option value="Raw Material">Raw Material (Bahan Baku)</option>
-                <option value="Standard Part">Standard Part (Kebutuhan Cetak)</option>
-                <option value="Sub-Assembly">Sub-Assembly (Komponen Rakitan)</option>
-                <option value="Finished Goods">Finished Goods (Produk Akhir)</option>
-              </select>
+                onChange={e => setCategory(e.target.value)}
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg"
+              />
             </div>
           </div>
 
@@ -268,14 +351,13 @@ export default function InventoryView({
           <div className="flex gap-2">
             <select
               value={categoryFilter}
-              onChange={e => setCategoryFilter(e.target.value as any)}
+              onChange={e => setCategoryFilter(e.target.value)}
               className="text-xs border border-slate-200 rounded-lg bg-slate-50 px-3 py-2 font-medium"
             >
               <option value="All">Semua Kategori Persediaan</option>
-              <option value="Raw Material">Raw Material</option>
-              <option value="Standard Part">Standard Part</option>
-              <option value="Sub-Assembly">Sub-Assembly</option>
-              <option value="Finished Goods">Finished Goods</option>
+              {Array.from(new Set(stockItems.map(item => item.category).filter(Boolean))).map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
             </select>
           </div>
         </div>

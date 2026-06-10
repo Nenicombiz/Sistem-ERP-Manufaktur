@@ -40,6 +40,8 @@ export interface PrimaryPO {
   status: 'Pending' | 'In Progress' | 'Completed' | 'Cancelled';
   deptStatuses: { [key in ManufacturingDepartment]?: 'Waiting' | 'In Progress' | 'Action Taken' | 'Approved' };
   notes?: string;
+  customerId?: string;
+  productId?: string;
 }
 
 export interface DepartmentPO {
@@ -63,7 +65,7 @@ export interface StockItem {
   id: string;
   code: string;
   name: string;
-  category: 'Raw Material' | 'Standard Part' | 'Sub-Assembly' | 'Finished Goods';
+  category: string;
   quantity: number;
   unit: string;
   unitCost: number;
